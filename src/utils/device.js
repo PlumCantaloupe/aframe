@@ -7,30 +7,40 @@ window.addEventListener('vrdisplayactivate', function (evt) {
   // WebXR takes priority if available.
   if (navigator.xr) { return; }
 
+  const scene = document.querySelector('a-scene');
   vrDisplay = evt.display;
 
-  const scene = document.querySelector('a-scene');
-  const rendererSystem = scene.getAttribute('renderer');
-  const canvas = scene.canvas; // Oculus Browser will fail if we don't provide correct canvas VRLayer
+  // make it a function we can use as callback ...
+  const requestPresentFunc = () => {
+    const rendererSystem = scene.getAttribute('renderer');
+    const canvas = scene.canvas; // Oculus Browser will fail if we don't provide correct canvas VRLayer
 
-  // Not sure if required but seems good practise to stay consistent on request present
-  const presentationAttributes = {
-    highRefreshRate: rendererSystem.highRefreshRate,
-    foveationLevel: rendererSystem.foveationLevel
+    // Not sure if required but seems good practise to stay consistent on request present
+    const presentationAttributes = {
+      highRefreshRate: rendererSystem.highRefreshRate,
+      foveationLevel: rendererSystem.foveationLevel
+    };
+
+    // Request present immediately. a-scene will be allowed to enter VR without user gesture.
+    return vrDisplay.requestPresent([{
+      source: canvas,
+      attributes: presentationAttributes
+    }]).then(function () { console.warn('Succeeded to enter VR mode (`requestPresent`)'); },
+      function (err) {
+        if (err && err.message) {
+          throw new Error('Failed to enter VR mode (`requestPresent`): ' + err.message);
+        } else {
+          throw new Error('Failed to enter VR mode (`requestPresent`).');
+        }
+      });
   };
 
-  // Request present immediately. a-scene will be allowed to enter VR without user gesture.
-  return vrDisplay.requestPresent([{
-    source: canvas,
-    attributes: presentationAttributes
-  }]).then(function () { console.warn('Succeeded to enter VR mode (`requestPresent`)'); },
-    function (err) {
-      if (err && err.message) {
-        throw new Error('Failed to enter VR mode (`requestPresent`): ' + err.message);
-      } else {
-        throw new Error('Failed to enter VR mode (`requestPresent`).');
-      }
-    });
+  // is scene exist requestPresent .. else wait until it is
+  if (scene.hasLoaded) {
+    requestPresentFunc();
+  } else {
+    scene.addEventListener('loaded', requestPresentFunc);
+  }
 });
 
 // Support both WebVR and WebXR APIs.
