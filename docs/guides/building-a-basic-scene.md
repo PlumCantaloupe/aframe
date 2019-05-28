@@ -40,7 +40,7 @@ We start out with a minimal HTML structure:
 ```html
 <html>
   <head>
-    <script src="https://aframe.io/releases/0.9.1/aframe.min.js"></script>
+    <script src="https://aframe.io/releases/0.9.2/aframe.min.js"></script>
   </head>
   <body>
     <a-scene>
@@ -228,7 +228,7 @@ First, include the environment component using a script tag after A-Frame:
 
 ```html
 <head>
-  <script src="https://aframe.io/releases/0.9.1/aframe.min.js"></script>
+  <script src="https://aframe.io/releases/0.9.2/aframe.min.js"></script>
   <script src="https://unpkg.com/aframe-environment-component/dist/aframe-environment-component.min.js"></script>
 </head>
 ```
@@ -545,8 +545,9 @@ and set the value on the `this.el.object3D.scale` directly for performance.
 
     init: function () {
       var data = this.data;
+      var el = this.el;
       this.el.addEventListener('mouseenter', function () {
-        this.el.object3D.scale.copy(data.to);
+        el.object3D.scale.copy(data.to);
       });
     }
   });

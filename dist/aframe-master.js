@@ -4512,29 +4512,16 @@ function filterArray(arr, callback) {
   return result;
 }
 
-var auxArrayFlatten = [];
-
-function flattenArray(arr) {
-  if (!arr.length) { return arr; }
-
-  var result = auxArrayFlatten;
-  var node = arr.pop();
-
-  do {
-    if (node.constructor === Array) {
-      for (var i = 0; i < node.length; i++) {
-        arr.push(node[i]);
-      }
+function flattenArray (arr, result) {
+  if (!result) { result = []; }
+  for (var i = 0, length = arr.length; i < length; i++) {
+    var value = arr[i];
+    if (Array.isArray(value)) {
+      flattenArray(value, result);
     } else {
-      result.push(node);
+      result.push(value);
     }
-  } while (arr.length && (node = arr.pop()) !== undefined);
-
-  result.reverse();  // Reverse result to restore the original order.
-
-  // arr turns into the auxArray and we return the previously aux array.
-  auxArrayFlatten = arr;
-  auxArrayFilter.length = 0;
+  }
   return result;
 }
 
@@ -63415,7 +63402,7 @@ function extend() {
 },{}],51:[function(_dereq_,module,exports){
 module.exports={
   "name": "aframe",
-  "version": "0.9.1",
+  "version": "0.9.2",
   "description": "A web framework for building virtual reality experiences.",
   "homepage": "https://aframe.io/",
   "main": "dist/aframe-master.js",
@@ -63434,7 +63421,7 @@ module.exports={
     "lint:fix": "semistandard --fix",
     "precommit": "npm run lint",
     "prepush": "node scripts/testOnlyCheck.js",
-    "prerelease": "node scripts/release.js 0.9.0 0.9.1",
+    "prerelease": "node scripts/release.js 0.9.1 0.9.2",
     "start": "npm run dev",
     "start:https": "cross-env SSL=true npm run dev",
     "test": "karma start ./tests/karma.conf.js",
@@ -63464,7 +63451,7 @@ module.exports={
     "present": "0.0.6",
     "promise-polyfill": "^3.1.0",
     "style-attr": "^1.0.2",
-    "super-animejs": "^3.0.0",
+    "super-animejs": "^3.1.0",
     "super-three": "^0.102.2",
     "three-bmfont-text": "^2.1.0",
     "webvr-polyfill": "^0.10.10"
@@ -67343,6 +67330,7 @@ module.exports.Component = registerComponent('oculus-go-controls', {
     var data = this.data;
     el.setAttribute('tracked-controls', {
       armModel: data.armModel,
+      hand: data.hand,
       idPrefix: GAMEPAD_ID_PREFIX,
       orientationOffset: data.orientationOffset
     });
@@ -68730,8 +68718,14 @@ module.exports.Component = registerComponent('screenshot', {
    * Return canvas instead of triggering download (e.g., for uploading blob to server).
    */
   getCanvas: function (projection) {
+    var isVREnabled = this.el.renderer.vr.enabled;
+    var renderer = this.el.renderer;
+    // Disable VR.
     var params = this.setCapture(projection);
+    renderer.vr.enabled = false;
     this.renderCapture(params.camera, params.size, params.projection);
+    // Restore VR.
+    renderer.vr.enabled = isVREnabled;
     return this.canvas;
   },
 
@@ -68749,10 +68743,13 @@ module.exports.Component = registerComponent('screenshot', {
     this.resize(size.width, size.height);
     // Render scene to render target.
     renderer.autoClear = true;
-    renderer.render(el.object3D, camera, output, true);
+    renderer.clear();
+    renderer.setRenderTarget(output);
+    renderer.render(el.object3D, camera);
     renderer.autoClear = autoClear;
     // Read image pizels back.
     renderer.readRenderTargetPixels(output, 0, 0, size.width, size.height, pixels);
+    renderer.setRenderTarget(null);
     if (projection === 'perspective') {
       pixels = this.flipPixelsVertically(pixels, size.width, size.height);
     }
@@ -72590,7 +72587,7 @@ var proto = Object.create(ANode.prototype, {
   destroy: {
     value: function () {
       var key;
-      if (this.el.parentNode) {
+      if (this.parentNode) {
         warn('Entity can only be destroyed if detached from scenegraph.');
         return;
       }
@@ -74445,6 +74442,34 @@ module.exports.AScene = registerElement('a-scene', {
         initMetaTags(this);
         initWakelock(this);
 
+        // Handler to exit VR (e.g., Oculus Browser back button).
+        this.onVRPresentChangeBound = bind(this.onVRPresentChange, this);
+        window.addEventListener('vrdisplaypresentchange', this.onVRPresentChangeBound);
+
+        // Bind functions.
+        this.enterVRBound = function () { self.enterVR(); };
+        this.exitVRBound = function () { self.exitVR(); };
+        this.exitVRTrueBound = function () { self.exitVR(true); };
+        this.pointerRestrictedBound = function () { self.pointerRestricted(); };
+        this.pointerUnrestrictedBound = function () { self.pointerUnrestricted(); };
+
+        if (!isWebXRAvailable) {
+          // Exit VR on `vrdisplaydeactivate` (e.g. taking off Rift headset).
+          window.addEventListener('vrdisplaydeactivate', this.exitVRBound);
+
+          // Exit VR on `vrdisplaydisconnect` (e.g. unplugging Rift headset).
+          window.addEventListener('vrdisplaydisconnect', this.exitVRTrueBound);
+
+          // Register for mouse restricted events while in VR
+          // (e.g. mouse no longer available on desktop 2D view)
+          window.addEventListener('vrdisplaypointerrestricted', this.pointerRestrictedBound);
+
+          // Register for mouse unrestricted events while in VR
+          // (e.g. mouse once again available on desktop 2D view)
+          window.addEventListener('vrdisplaypointerunrestricted',
+                                  this.pointerUnrestrictedBound);
+        }
+
         // Camera set up by camera system.
         this.addEventListener('cameraready', function () {
           self.attachedCallbackPostCamera();
@@ -74477,36 +74502,6 @@ module.exports.AScene = registerElement('a-scene', {
 
         // Add to scene index.
         scenes.push(this);
-
-        // Handler to exit VR (e.g., Oculus Browser back button).
-        this.onVRPresentChangeBound = bind(this.onVRPresentChange, this);
-        window.addEventListener('vrdisplaypresentchange', this.onVRPresentChangeBound);
-
-        // bind functions
-        this.enterVRBound = function () { self.enterVR(); };
-        this.exitVRBound = function () { self.exitVR(); };
-        this.exitVRTrueBound = function () { self.exitVR(true); };
-        this.pointerRestrictedBound = function () { self.pointerRestricted(); };
-        this.pointerUnrestrictedBound = function () { self.pointerUnrestricted(); };
-
-        if (!isWebXRAvailable) {
-          // Enter VR on `vrdisplayactivate` (e.g. putting on Rift headset).
-          window.addEventListener('vrdisplayactivate', this.enterVRBound);
-
-          // Exit VR on `vrdisplaydeactivate` (e.g. taking off Rift headset).
-          window.addEventListener('vrdisplaydeactivate', this.exitVRBound);
-
-          // Exit VR on `vrdisplaydisconnect` (e.g. unplugging Rift headset).
-          window.addEventListener('vrdisplaydisconnect', this.exitVRTrueBound);
-
-          // Register for mouse restricted events while in VR
-          // (e.g. mouse no longer available on desktop 2D view)
-          window.addEventListener('vrdisplaypointerrestricted', this.pointerRestrictedBound);
-
-          // Register for mouse unrestricted events while in VR
-          // (e.g. mouse once again available on desktop 2D view)
-          window.addEventListener('vrdisplaypointerunrestricted', this.pointerUnrestrictedBound);
-        }
       },
       writable: window.debug
     },
@@ -74638,6 +74633,11 @@ module.exports.AScene = registerElement('a-scene', {
               enterVRSuccess();
             });
           } else {
+            if (vrDisplay.isPresenting &&
+                !window.hasNativeWebVRImplementation) {
+              enterVRSuccess();
+              return Promise.resolve();
+            }
             var rendererSystem = this.getAttribute('renderer');
             var presentationAttributes = {
               highRefreshRate: rendererSystem.highRefreshRate,
@@ -75157,6 +75157,11 @@ function requestFullscreen (canvas) {
 }
 
 function exitFullscreen () {
+  var fullscreenEl =
+    document.fullscreenElement ||
+    document.webkitFullscreenElement ||
+    document.mozFullScreenElement;
+  if (!fullscreenEl) { return; }
   if (document.exitFullscreen) {
     document.exitFullscreen();
   } else if (document.mozCancelFullScreen) {
@@ -75300,7 +75305,7 @@ var constants = _dereq_('../../constants/');
 var extend = _dereq_('../../utils').extend;
 
 var MOBILE_HEAD_TAGS = module.exports.MOBILE_HEAD_TAGS = [
-  Meta({name: 'viewport', content: 'width=device-width,initial-scale=1,maximum-scale=1,shrink-to-fit=no,user-scalable=no,minimal-ui'}),
+  Meta({name: 'viewport', content: 'width=device-width,initial-scale=1,maximum-scale=1,shrink-to-fit=no,user-scalable=no,minimal-ui,viewport-fit=cover'}),
 
   // W3C-standardised meta tags.
   Meta({name: 'mobile-web-app-capable', content: 'yes'}),
@@ -77016,7 +77021,7 @@ _dereq_('./core/a-mixin');
 _dereq_('./extras/components/');
 _dereq_('./extras/primitives/');
 
-console.log('A-Frame Version: 0.9.1 (Date 2019-04-18, Commit #0ea981b)');
+console.log('A-Frame Version: 0.9.2 (Date 2019-05-28, Commit #c96ac9f)');
 console.log('three Version (https://github.com/supermedium/three.js):',
             pkg.dependencies['super-three']);
 console.log('WebVR Polyfill Version:', pkg.dependencies['webvr-polyfill']);
@@ -79120,7 +79125,7 @@ module.exports.isIOS = isIOS;
  *  Detect browsers in Stand-Alone headsets
  */
 function isMobileVR () {
-  return /(OculusBrowser)|(SamsungBrowser)|(Mobile VR)/i.test(window.navigator.userAgent);
+  return /(OculusBrowser)|(Mobile VR)/i.test(window.navigator.userAgent);
 }
 module.exports.isMobileVR = isMobileVR;
 
